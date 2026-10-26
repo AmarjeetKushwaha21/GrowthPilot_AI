@@ -1,9 +1,19 @@
-require("dotenv").config();
+const path = require("path");
+const fs = require("fs");
+const dotenv = require("dotenv");
+
+// Ensure environment variables are loaded from backend/.env regardless of current working directory
+const backendEnvPath = path.resolve(__dirname, ".env");
+if (fs.existsSync(backendEnvPath)) {
+    dotenv.config({ path: backendEnvPath });
+} else {
+    dotenv.config();
+}
+
 const express = require("express");
 const mongoose = require("mongoose");
-const fs = require("fs");
-const path = require("path");
 const csv = require("csv-parser");
+const { connectDB, isDBConnected, getStorageMode } = require("./config/db");
 const Merchant = require("./models/Merchant");
 const Transaction = require("./models/Transaction");
 const Campaign = require("./models/Campaign");
@@ -60,7 +70,7 @@ function loadCsvToMemory() {
             })
             .on("end", () => {
                 memoryTransactions = txns;
-                console.log(`Loaded ${memoryTransactions.length} transactions into memory cache.`);
+                console.log(`[CSV Cache] Loaded ${memoryTransactions.length} transactions into memory cache.`);
                 resolve(memoryTransactions);
             })
             .on("error", (err) => {
@@ -69,33 +79,83 @@ function loadCsvToMemory() {
             });
     });
 }
-loadCsvToMemory();
-
-// MongoDB Connection
-if (process.env.MONGODB_URI) {
-    mongoose.connect(process.env.MONGODB_URI)
-        .then(async () => {
-            isMongoConnected = true;
-            console.log("MongoDB Connected Successfully!");
-            try {
-                const count = await Transaction.countDocuments();
-                const merchants = await Transaction.distinct("merchant_name");
-                if (count < 400 || merchants.length < 3) {
-                    console.log("Importing all transaction records from CSV into MongoDB...");
-                    await importTransactionsHelper();
-                } else {
-                    console.log(`MongoDB ready with ${count} transactions across ${merchants.length} merchants: ${merchants.join(", ")}`);
-                }
-            } catch (e) {
-                console.log("Error checking transaction count:", e.message);
+// Initialize cache and connect to database
+loadCsvToMemory().then(() => {
+    return connectDB();
+}).then(async (dbStatus) => {
+    isMongoConnected = dbStatus.isConnected && mongoose.connection.readyState === 1;
+    if (isMongoConnected) {
+        try {
+            const count = await Transaction.countDocuments();
+            const merchants = await Transaction.distinct("merchant_name");
+            if (count > 0) {
+                console.log(`[MongoDB Storage Ready] ${count} transactions across ${merchants.length} merchants in Atlas database: GrowthPilotAI.`);
+            } else {
+                console.log("[MongoDB Storage Ready] Connected to GrowthPilotAI (empty collection). Run 'npm run migrate' or POST /api/import-transactions to import CSV data.");
             }
-        })
-        .catch((error) => {
-            isMongoConnected = false;
-            console.log("MongoDB Connection Error (using in-memory fallback):", error.message);
-        });
-} else {
-    console.log("MONGODB_URI not provided. Running in resilient in-memory mode using transactions.csv.");
+        } catch (e) {
+            console.log("[MongoDB Transaction Count Error]:", e.message);
+        }
+    } else {
+        console.log(`[Storage Mode Active] Resilient In-Memory Fallback using transactions.csv (${memoryTransactions.length} records available).`);
+    }
+});
+
+// Helper function to import CSV into MongoDB with idempotent upserts (avoiding duplicates)
+async function importTransactionsHelper() {
+    return new Promise((resolve, reject) => {
+        const transactions = [];
+        const csvPath = path.join(__dirname, "transactions.csv");
+        if (!fs.existsSync(csvPath)) {
+            return reject(new Error(`transactions.csv not found at ${csvPath}`));
+        }
+        fs.createReadStream(csvPath)
+            .pipe(csv())
+            .on("data", (row) => {
+                if (row.transaction_id && row.merchant_name) {
+                    transactions.push({
+                        transaction_id: String(row.transaction_id).trim(),
+                        merchant_name: String(row.merchant_name).trim(),
+                        amount: Number(row.amount) || 0,
+                        date: new Date(row.date),
+                        hour: Number(row.hour),
+                        minute: Number(row.minute),
+                        category: row.category ? String(row.category).trim() : "General",
+                        payment_status: row.payment_status ? String(row.payment_status).trim() : "SUCCESS"
+                    });
+                }
+            })
+            .on("end", async () => {
+                memoryTransactions = transactions;
+                if (mongoose.connection.readyState === 1) {
+                    try {
+                        const bulkOps = transactions.map((t) => ({
+                            updateOne: {
+                                filter: { transaction_id: t.transaction_id },
+                                update: { $set: t },
+                                upsert: true
+                            }
+                        }));
+                        const result = await Transaction.bulkWrite(bulkOps);
+                        const total = await Transaction.countDocuments();
+                        console.log(`[CSV Import] Synchronized ${transactions.length} records to MongoDB: ${result.upsertedCount} inserted, ${result.matchedCount} matched. Total in DB: ${total}`);
+                        return resolve({
+                            count: transactions.length,
+                            upserted: result.upsertedCount,
+                            matched: result.matchedCount,
+                            totalInDb: total,
+                            storageMode: "mongodb"
+                        });
+                    } catch (dbErr) {
+                        return reject(dbErr);
+                    }
+                }
+                resolve({ count: transactions.length, storageMode: "in-memory" });
+            })
+            .on("error", (error) => {
+                reject(error);
+            });
+    });
 }
 
 app.use(express.json());
@@ -113,49 +173,13 @@ app.use((req, res, next) => {
     next();
 });
 
-// Helper function to import CSV into MongoDB
-async function importTransactionsHelper() {
-    return new Promise((resolve, reject) => {
-        const transactions = [];
-        const csvPath = path.join(__dirname, "transactions.csv");
-        fs.createReadStream(csvPath)
-            .pipe(csv())
-            .on("data", (row) => {
-                if (row.transaction_id && row.merchant_name) {
-                    transactions.push({
-                        transaction_id: String(row.transaction_id).trim(),
-                        merchant_name: String(row.merchant_name).trim(),
-                        amount: Number(row.amount),
-                        date: new Date(row.date),
-                        hour: Number(row.hour),
-                        minute: Number(row.minute),
-                        category: row.category ? String(row.category).trim() : "General",
-                        payment_status: row.payment_status ? String(row.payment_status).trim() : "SUCCESS"
-                    });
-                }
-            })
-            .on("end", async () => {
-                memoryTransactions = transactions;
-                if (mongoose.connection.readyState === 1) {
-                    await Transaction.deleteMany({});
-                    await Transaction.insertMany(transactions);
-                    console.log(`${transactions.length} transaction records imported successfully into MongoDB!`);
-                }
-                resolve(transactions.length);
-            })
-            .on("error", (error) => {
-                reject(error);
-            });
-    });
-}
-
 // Resilient transaction retriever (uses MongoDB when connected, memory cache when not)
 async function fetchTransactions(merchantName, filterSuccessOnly = true) {
     if (mongoose.connection.readyState === 1) {
         try {
             const query = { merchant_name: merchantName };
             if (filterSuccessOnly) query.payment_status = "SUCCESS";
-            const txns = await Transaction.find(query).sort({ date: 1 });
+            const txns = await Transaction.find(query).sort({ date: 1 }).lean();
             if (txns && txns.length > 0) return txns;
         } catch (e) {
             console.log("DB query error, using memory fallback:", e.message);
@@ -176,6 +200,19 @@ async function fetchTransactions(merchantName, filterSuccessOnly = true) {
 // Root Health Check
 app.get("/", (req, res) => {
     res.send("GrowthPilot AI Merchant Growth Backend is running!");
+});
+
+// System Health and Storage Status Endpoint
+app.get("/api/health", (req, res) => {
+    const isMongo = mongoose.connection.readyState === 1;
+    res.json({
+        success: true,
+        status: "healthy",
+        storageMode: isMongo ? "mongodb" : "in-memory-csv",
+        mongoConnected: isMongo,
+        cachedTransactions: memoryTransactions.length,
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Available merchants list
@@ -296,11 +333,16 @@ app.post("/api/seed-merchant", async (req, res) => {
 // Import transactions route
 app.post("/api/import-transactions", async (req, res) => {
     try {
-        const count = await importTransactionsHelper();
+        const result = await importTransactionsHelper();
+        const inMongo = mongoose.connection.readyState === 1;
         res.json({
             success: true,
-            message: `${count} transaction records imported successfully!`,
-            count: count
+            message: inMongo
+                ? `${result.count} transaction records synchronized with MongoDB Atlas.`
+                : `${result.count} transaction records loaded into memory cache (MongoDB not connected).`,
+            count: result.count,
+            storageMode: inMongo ? "mongodb" : "in-memory",
+            details: result
         });
     } catch (error) {
         res.status(500).json({

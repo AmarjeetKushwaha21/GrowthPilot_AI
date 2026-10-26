@@ -1,11 +1,12 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "GrowthPilot AI Backend Service",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test_endpoints.js"
+    "test": "node test_endpoints.js",
+    "migrate": "node scripts/migrate.js"
   },
   "keywords": [],
   "author": "",

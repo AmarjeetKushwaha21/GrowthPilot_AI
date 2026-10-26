@@ -41,6 +41,7 @@ async function runTests() {
 
     const tests = [
         { name: "Root endpoint", method: "GET", path: "/" },
+        { name: "Health check", method: "GET", path: "/api/health" },
         { name: "Get merchants", method: "GET", path: "/api/merchants" },
         { name: "Get status", method: "GET", path: "/api/status?merchant_name=Sharma%20Caf%C3%A9" },
         { name: "Get merchant stats", method: "GET", path: "/api/merchant?merchant_name=Sharma%20Caf%C3%A9" },
@@ -54,6 +55,7 @@ async function runTests() {
         { name: "Get campaign result", method: "GET", path: "/api/campaign-result?merchant_name=Sharma%20Caf%C3%A9" },
         { name: "Get Historical Intelligence", method: "GET", path: "/api/historical-intelligence?merchant_name=Sharma%20Caf%C3%A9" },
         { name: "Get Campaigns", method: "GET", path: "/api/campaigns?merchant_name=Sharma%20Caf%C3%A9" },
+        { name: "Import Transactions CSV", method: "POST", path: "/api/import-transactions" },
         { name: "Run AI Growth Agent Cycle", method: "POST", path: "/api/agent/cycle", body: { merchant_name: "Sharma Café" } }
     ];
 
