@@ -5,10 +5,16 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "node src/server.js",
     "test": "node test_endpoints.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node src/scripts/importTransactions.js"
   },
-  "keywords": [],
+  "keywords": [
+    "growthpilot",
+    "express",
+    "mongodb",
+    "sarvamai"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",

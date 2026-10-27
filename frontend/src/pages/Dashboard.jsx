@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import Sidebar from '../components/Sidebar';
-import Topbar from '../components/Topbar';
+import { AlertCircle, RefreshCw } from 'lucide-react';
+import DashboardLayout from '../layouts/DashboardLayout';
 import WelcomeCard from '../components/WelcomeCard';
 import StatsGrid from '../components/StatsGrid';
 import BusinessHealth from '../components/BusinessHealth';
@@ -19,22 +19,31 @@ export default function Dashboard() {
     const dashboard = useDashboard();
 
     return (
-        <div className="app-container">
-            {/* Sidebar Navigation */}
-            <Sidebar
-                activeSection={activeSection}
-                onSelectSection={setActiveSection}
-            />
+        <DashboardLayout
+            activeSection={activeSection}
+            onSelectSection={setActiveSection}
+            currentMerchant={dashboard.currentMerchant}
+            merchants={dashboard.merchants}
+            onSelectMerchant={dashboard.setCurrentMerchant}
+        >
+                {/* Cold Start / Connection Notice */}
+                {dashboard.connectionError && (
+                    <div className="connection-banner" role="alert">
+                        <div className="connection-banner-text">
+                            <AlertCircle size={16} className="connection-icon" />
+                            <span>{dashboard.connectionError}</span>
+                        </div>
+                        <button
+                            className="connection-retry-btn"
+                            onClick={dashboard.retry}
+                            disabled={dashboard.loadingStats}
+                        >
+                            <RefreshCw size={13} className={dashboard.loadingStats ? "spin" : ""} />
+                            {dashboard.loadingStats ? "Retrying…" : "Retry"}
+                        </button>
+                    </div>
+                )}
 
-            {/* Header Topbar */}
-            <Topbar
-                currentMerchant={dashboard.currentMerchant}
-                merchants={dashboard.merchants}
-                onSelectMerchant={dashboard.setCurrentMerchant}
-            />
-
-            {/* Dashboard Main Content */}
-            <main>
                 {/* 1. Welcome Greeting Card */}
                 <WelcomeCard merchantName={dashboard.currentMerchant} />
 
@@ -107,7 +116,6 @@ export default function Dashboard() {
                     recommendationsCount={dashboard.recommendations?.length}
                     activatedAction={dashboard.activatedAction}
                 />
-            </main>
-        </div>
+        </DashboardLayout>
     );
 }

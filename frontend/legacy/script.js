@@ -1,6 +1,6 @@
 // ─── GrowthPilot AI — Frontend Controller ───
 
-const API_BASE = "https://vyapaar-ai-dh59.onrender.com/api";
+const API_BASE = "https://growthpilot-ai-2-ofr7.onrender.com/api";
 
 // ─── State ───
 let currentMerchant = "Sharma Café";

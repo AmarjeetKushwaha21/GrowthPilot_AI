@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 
 export function useDashboard() {
@@ -41,11 +41,18 @@ export function useDashboard() {
     const [loadingCampaigns, setLoadingCampaigns] = useState(false);
     const [loadingAgent, setLoadingAgent] = useState(false);
 
+    // Connection & Cold Start Resilience
+    const [connectionError, setConnectionError] = useState(null);
+    const [isWakingUp, setIsWakingUp] = useState(false);
+    const autoRetryCount = useRef(0);
+
     // Load available merchants on mount
     useEffect(() => {
         api.getMerchants().then(list => {
             if (list && list.length > 0) setMerchants(list);
-        }).catch(() => {});
+        }).catch(err => {
+            console.warn("Could not fetch merchants on mount:", err.message);
+        });
     }, []);
 
     // Load full dashboard for selected merchant
@@ -62,8 +69,28 @@ export function useDashboard() {
         // 1. Stats
         setLoadingStats(true);
         api.getMerchantStats(merchantName)
-            .then(data => setStats(data))
-            .catch(err => console.error("Merchant Stats Error:", err))
+            .then(data => {
+                setStats(data);
+                setConnectionError(null);
+                setIsWakingUp(false);
+                autoRetryCount.current = 0;
+            })
+            .catch(err => {
+                console.error("Merchant Stats Error:", err);
+                const isColdStart = err.isTimeout || err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError") || err.status === 502 || err.status === 504;
+                if (isColdStart) {
+                    setIsWakingUp(true);
+                    setConnectionError("Backend server is warming up (Render free tier cold start can take up to 45s). Retrying automatically…");
+                    if (autoRetryCount.current < 2) {
+                        autoRetryCount.current += 1;
+                        setTimeout(() => {
+                            loadDashboardData(merchantName);
+                        }, 6000);
+                    }
+                } else {
+                    setConnectionError(`Connection notice: ${err.message}`);
+                }
+            })
             .finally(() => setLoadingStats(false));
 
         // 2. AI Business Analysis
@@ -133,6 +160,17 @@ export function useDashboard() {
     }, []);
 
     useEffect(() => {
+        loadDashboardData(currentMerchant);
+    }, [currentMerchant, loadDashboardData]);
+
+    // Manual Retry
+    const retry = useCallback(() => {
+        setConnectionError(null);
+        setIsWakingUp(false);
+        autoRetryCount.current = 0;
+        api.getMerchants().then(list => {
+            if (list && list.length > 0) setMerchants(list);
+        }).catch(() => {});
         loadDashboardData(currentMerchant);
     }, [currentMerchant, loadDashboardData]);
 
@@ -276,6 +314,9 @@ export function useDashboard() {
         runAgentCycle,
         approveAgentCampaign,
         rejectAgentCampaign,
-        editAndApproveAgentCampaign
+        editAndApproveAgentCampaign,
+        connectionError,
+        isWakingUp,
+        retry
     };
 }
